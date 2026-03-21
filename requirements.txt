@@ -1,6 +1,6 @@
 streamlit
-dashscope>=1.20.0  # 升级到支持 qwen3.5-flash 的版本
+dashscope>=1.20.0
 pandas
-requests
-pillow
 openpyxl
+pillow
+imagehash
