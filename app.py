@@ -156,8 +156,8 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ==================== 单条生成 ====================
 with tab1:
     st.subheader("🔗 拼多多链接解析")
-    link = st.text_input("商品链接")
-    if st.button("🚀 解析商品", type="primary"):
+    link = st.text_input("商品链接", key="single_link")
+    if st.button("🚀 解析商品", type="primary", key="parse_single"):
         t, p, img = parse_pdd_link(link)
         if t and p:
             st.session_state['title'] = t
@@ -167,16 +167,16 @@ with tab1:
         else:
             st.warning("解析失败")
 
-    title = st.text_input("商品标题", value=st.session_state.get("title", ""))
-    price = st.number_input("成本价", value=st.session_state.get("price", 10.0), step=1.0)
-    style = st.selectbox("风格", styles)
+    title = st.text_input("商品标题", value=st.session_state.get("title", ""), key="single_title")
+    price = st.number_input("成本价", value=st.session_state.get("price", 10.0), step=1.0, key="single_price")
+    style = st.selectbox("风格", styles, key="single_style")
 
     col1, col2 = st.columns(2)
     with col1:
         run = st.button("✨ 生成闲鱼文案", type="primary",
-                        disabled=(st.session_state.gen_count >= free_limit))
+                        disabled=(st.session_state.gen_count >= free_limit), key="gen_single")
     with col2:
-        is_pro = st.checkbox("专业版（无限次）", value=False)
+        is_pro = st.checkbox("专业版（无限次）", value=False, key="pro_single")
 
     if run:
         if not title:
@@ -210,7 +210,7 @@ with tab1:
                             st.warning(f"引流 {data['prices']['aggressive']}")
 
                         st.subheader("📝 描述")
-                        st.text_area("", data['description'], height=240)
+                        st.text_area("", data['description'], height=240, key="desc_single")
                         copy_btn(data['description'], "复制全文")
 
                         st.subheader("🏷 闲鱼标签")
@@ -228,17 +228,17 @@ with tab1:
 # ==================== 批量生成 ====================
 with tab2:
     st.subheader("📦 批量链接一行一个")
-    batch_input = st.text_area("链接列表", height=200)
-    batch_style = st.selectbox("批量生成风格", styles)
-    pro_batch = st.checkbox("专业版批量模式", value=False)
+    batch_input = st.text_area("链接列表", height=200, key="batch_links")
+    batch_style = st.selectbox("批量生成风格", styles, key="batch_style")
+    pro_batch = st.checkbox("专业版批量模式", value=False, key="pro_batch")
 
-    if st.button("🔍 解析并批量生成"):
+    if st.button("🔍 解析并批量生成", key="gen_batch"):
         with st.spinner("批量处理中..."):
             goods = batch_parse(batch_input)
             if not goods:
                 st.warning("无有效商品")
             else:
-                st.dataframe(pd.DataFrame(goods))
+                st.dataframe(pd.DataFrame(goods), key="df_batch")
                 res = []
                 for g in goods[:5]:
                     try:
@@ -257,25 +257,25 @@ with tab2:
                         continue
                 st.session_state.batch_result = res
                 df = pd.DataFrame(res)
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(df, use_container_width=True, key="df_result")
                 bio = BytesIO()
                 with pd.ExcelWriter(bio, engine='openpyxl') as w:
                     df.to_excel(w, index=False)
-                st.download_button("📥 导出Excel", bio.getvalue(), "闲鱼批量文案.xlsx")
+                st.download_button("📥 导出Excel", bio.getvalue(), "闲鱼批量文案.xlsx", key="dl_batch")
 
 # ==================== 图片下载+水印 ====================
 with tab3:
     st.subheader("🖼️ 商品图片下载 & 水印")
-    img_link = st.text_input("商品链接")
-    mark_text = st.text_input("水印文字", value="闲鱼优品")
-    if st.button("🖼️ 获取并加水印"):
+    img_link = st.text_input("商品链接", key="img_link")
+    mark_text = st.text_input("水印文字", value="闲鱼优品", key="watermark_text")
+    if st.button("🖼️ 获取并加水印", key="get_img"):
         t, p, img_url = parse_pdd_link(img_link)
         if img_url:
             img_data = requests.get(img_url).content
             buf = BytesIO(img_data)
             marked = add_watermark(buf, mark_text)
             st.image(marked, use_column_width=True)
-            st.download_button("💾 保存图片", marked, "with_watermark.jpg")
+            st.download_button("💾 保存图片", marked, "with_watermark.jpg", key="dl_img")
         else:
             st.warning("获取图片失败")
 
@@ -284,10 +284,10 @@ with tab4:
     st.subheader("📜 生成历史")
     if st.session_state.history:
         df = pd.DataFrame(st.session_state.history)
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, use_container_width=True, key="df_history")
         st.download_button("📥 导出CSV",
                            df.to_csv(index=False, encoding='utf-8-sig'),
-                           "history.csv")
+                           "history.csv", key="dl_history")
     else:
         st.info("暂无记录")
 
