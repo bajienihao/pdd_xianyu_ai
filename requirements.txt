@@ -2,3 +2,5 @@ streamlit
 dashscope
 pandas
 requests
+pillow
+openpyxl
