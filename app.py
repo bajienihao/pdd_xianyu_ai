@@ -89,7 +89,7 @@ def batch_parse(text):
             res.append({"链接": u, "标题": t, "价格": p, "主图": img})
     return res
 
-# ==================== AI生成（稳定版）====================
+# ==================== AI生成（稳定版，已切换为 qwen-turbo）====================
 def generate_xianyu_content(title, price, style):
     prompt = f"""
 你是闲鱼TOP级卖家，严格使用【{style}】风格。
@@ -111,8 +111,9 @@ def generate_xianyu_content(title, price, style):
 }}
 """
     try:
+        # 关键修复：切换为稳定模型 qwen-turbo，避免 URL 错误
         resp = dashscope.Generation.call(
-            model='qwen3.5-flash',
+            model='qwen-turbo',  # 已替换原 qwen3.5-flash
             messages=[{"role": "user", "content": prompt}],
             result_format='message',
             temperature=0.7,
@@ -343,4 +344,4 @@ with tab5:
     st.info("开通：回复「我要加支付」")
 
 st.divider()
-st.caption("© 2026 小白SaaS · 稳定增强版 · 通义千问qwen3.5-flash")
+st.caption("© 2026 小白SaaS · 稳定增强版 · 通义千问qwen-turbo")
