@@ -51,32 +51,44 @@ def add_watermark(img_bytes, text="闲鱼优品"):
     except:
         return img_bytes
 
-# ==================== 解析单个链接 ====================
+# ==================== 【已修复】拼多多链接解析（API+页面双兜底）====================
 def parse_pdd_link(url):
     try:
-        goods_id_match = re.search(r'goods_id=(\d+)', url) or re.search(r'/goods/(\d+)', url)
+        goods_id_match = re.search(r'goods_id=(\d+)', url) or re.search(r'/goods/(\d+)', url) or re.search(r'(\d{10,})', url)
         if not goods_id_match:
+            st.warning("❌ 未识别到商品ID，请使用标准拼多多链接：https://mobile.yangkeduo.com/goods.html?goods_id=xxxxxx")
             return None, None, None
         goods_id = goods_id_match.group(1)
-        mobile_url = f"https://mobile.yangkeduo.com/goods.html?goods_id={goods_id}"
+        
+        api_url = f"https://api.yangkeduo.com/api/oak/v6/item/info?goods_id={goods_id}"
         headers = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 PddApp/6.0.0"
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 PddApp/7.0.0",
+            "Referer": f"https://mobile.yangkeduo.com/goods.html?goods_id={goods_id}",
+            "Accept": "application/json, text/plain, */*"
         }
-        r = requests.get(mobile_url, headers=headers, timeout=15)
-        r.encoding = 'utf-8'
-        text = r.text
-
-        title_match = re.search(r'"goodsName":"([^"]+)"', text) or re.search(r'"title":"([^"]+)"', text)
-        title = title_match.group(1) if title_match else None
-
-        price_match = re.search(r'"minGroupPrice":(\d+)', text) or re.search(r'"price":(\d+)', text)
-        price = round(int(price_match.group(1)) / 100, 2) if price_match else None
-
-        imgs = re.findall(r'"thumbUrl":"(https://[^"]+)"', text)
-        img_url = imgs[0].replace("\\u002F", "/") if imgs else None
-        return title, price, img_url
+        r = requests.get(api_url, headers=headers, timeout=20)
+        
+        if r.status_code == 200:
+            data = r.json()
+            title = data.get("goods_name")
+            price = round(data.get("min_group_price", 0) / 100, 2) if data.get("min_group_price") else None
+            img_url = data.get("thumb_url")
+            return title, price, img_url
+        else:
+            st.warning(f"⚠️ API请求失败（{r.status_code}），尝试页面解析兜底")
+            mobile_url = f"https://mobile.yangkeduo.com/goods.html?goods_id={goods_id}"
+            r = requests.get(mobile_url, headers=headers, timeout=20)
+            r.encoding = 'utf-8'
+            text = r.text
+            title_match = re.search(r'"goodsName":"([^"]+)"', text) or re.search(r'"title":"([^"]+)"', text)
+            title = title_match.group(1) if title_match else None
+            price_match = re.search(r'"minGroupPrice":(\d+)', text) or re.search(r'"price":(\d+)', text)
+            price = round(int(price_match.group(1)) / 100, 2) if price_match else None
+            imgs = re.findall(r'"thumbUrl":"(https://[^"]+)"', text)
+            img_url = imgs[0].replace("\\u002F", "/") if imgs else None
+            return title, price, img_url
     except Exception as e:
-        st.warning(f"解析失败：{str(e)}")
+        st.warning(f"❌ 解析失败：{str(e)}，请手动输入标题和价格")
         return None, None, None
 
 # ==================== 批量链接解析 ====================
@@ -111,9 +123,8 @@ def generate_xianyu_content(title, price, style):
 }}
 """
     try:
-        # 关键修复：切换为稳定模型 qwen-turbo，避免 URL 错误
         resp = dashscope.Generation.call(
-            model='qwen-turbo',  # 已替换原 qwen3.5-flash
+            model='qwen-turbo',
             messages=[{"role": "user", "content": prompt}],
             result_format='message',
             temperature=0.7,
@@ -121,13 +132,11 @@ def generate_xianyu_content(title, price, style):
         )
         if resp.status_code == HTTPStatus.OK:
             raw = resp.output.choices[0].message.content.strip()
-            # 强力清理AI返回的多余格式
             raw = re.sub(r'^```json|```$', '', raw).strip()
             raw = re.sub(r'^```|```$', '', raw).strip()
             raw = re.sub(r'[\n\r\t]', '', raw)
             data = json.loads(raw)
             
-            # 兜底补全缺失字段
             if "prices" not in data or not isinstance(data["prices"], dict):
                 data["prices"] = {
                     "conservative": round(price*1.3),
@@ -145,7 +154,6 @@ def generate_xianyu_content(title, price, style):
             return None
     except json.JSONDecodeError as e:
         st.error(f"JSON解析失败：{str(e)}，AI返回：{raw[:200]}...")
-        # 兜底返回基础文案
         return {
             "xianyu_title": filter_banned(title),
             "description": "个人闲置，成色如图，功能正常，拍下尽快发货~",
@@ -161,7 +169,6 @@ def generate_xianyu_content(title, price, style):
     except Exception as e:
         st.error(f"生成失败：{str(e)}")
         return None
-
 # ==================== 会话状态 ====================
 st.sidebar.header("⚙️ 配置")
 try:
@@ -194,7 +201,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ==================== 单条生成 ====================
 with tab1:
     st.subheader("🔗 拼多多链接解析")
-    link = st.text_input("商品链接", key="single_link")
+    link = st.text_input("商品链接", key="single_link", placeholder="https://mobile.yangkeduo.com/goods.html?goods_id=xxxxxx")
     if st.button("🚀 解析商品", type="primary", key="parse_single"):
         t, p, img = parse_pdd_link(link)
         if t and p:
@@ -266,7 +273,7 @@ with tab1:
 # ==================== 批量生成 ====================
 with tab2:
     st.subheader("📦 批量链接一行一个")
-    batch_input = st.text_area("链接列表", height=200, key="batch_links")
+    batch_input = st.text_area("链接列表", height=200, key="batch_links", placeholder="一行一个拼多多商品链接")
     batch_style = st.selectbox("批量生成风格", styles, key="batch_style")
     pro_batch = st.checkbox("专业版批量模式", value=False, key="pro_batch")
 
