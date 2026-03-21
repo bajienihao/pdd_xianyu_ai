@@ -8,13 +8,12 @@ import requests
 import re
 import time
 import base64
-from io import BytesIO, StringIO
+from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
-import random
 
 # ==================== 页面配置 ====================
 st.set_page_config(page_title="拼多多→闲鱼AI上货助手 Pro", page_icon="🚀", layout="wide")
-st.title("🚀 拼多多→闲鱼 AI上货助手 Pro 2026至尊版")
+st.title("🚀 拼多多→闲鱼 AI上货助手 Pro 2026稳定版")
 
 # ==================== 违禁词库（闲鱼超强版）====================
 banned_words = [
@@ -63,7 +62,7 @@ def parse_pdd_link(url):
         headers = {
             "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 PddApp/6.0.0"
         }
-        r = requests.get(mobile_url, headers=headers, timeout=10)
+        r = requests.get(mobile_url, headers=headers, timeout=15)
         r.encoding = 'utf-8'
         text = r.text
 
@@ -76,7 +75,8 @@ def parse_pdd_link(url):
         imgs = re.findall(r'"thumbUrl":"(https://[^"]+)"', text)
         img_url = imgs[0].replace("\\u002F", "/") if imgs else None
         return title, price, img_url
-    except:
+    except Exception as e:
+        st.warning(f"解析失败：{str(e)}")
         return None, None, None
 
 # ==================== 批量链接解析 ====================
@@ -89,40 +89,77 @@ def batch_parse(text):
             res.append({"链接": u, "标题": t, "价格": p, "主图": img})
     return res
 
-# ==================== AI生成 ====================
+# ==================== AI生成（稳定版）====================
 def generate_xianyu_content(title, price, style):
     prompt = f"""
 你是闲鱼TOP级卖家，严格使用【{style}】风格。
 商品原标题：{title}
 成本价：{price}元
 
-只返回标准JSON，不要任何多余内容：
+只返回标准JSON，不要任何多余内容、不要解释、不要包裹在代码块里：
 {{
     "xianyu_title": "30字内标题",
     "description": "200-300字描述",
     "tags": ["标签1","标签2","标签3","标签4","标签5"],
     "category": "推荐类目",
     "prices": {{
-        "conservative": 数字,
-        "recommended": 数字,
-        "aggressive": 数字
+        "conservative": {round(price*1.3)},
+        "recommended": {round(price*1.5)},
+        "aggressive": {round(price*1.1)}
     }},
     "tips": "上架小技巧"
 }}
 """
-    resp = dashscope.Generation.call(
-        model='qwen3.5-flash',
-        messages=[{"role": "user", "content": prompt}],
-        result_format='message'
-    )
-    if resp.status_code == HTTPStatus.OK:
-        raw = resp.output.choices[0].message.content.strip()
-        raw = re.sub(r'^```json|```$', '', raw).strip()
-        data = json.loads(raw)
-        data['xianyu_title'] = filter_banned(data['xianyu_title'])
-        data['description'] = filter_banned(data['description'])
-        return data
-    return None
+    try:
+        resp = dashscope.Generation.call(
+            model='qwen3.5-flash',
+            messages=[{"role": "user", "content": prompt}],
+            result_format='message',
+            temperature=0.7,
+            timeout=30
+        )
+        if resp.status_code == HTTPStatus.OK:
+            raw = resp.output.choices[0].message.content.strip()
+            # 强力清理AI返回的多余格式
+            raw = re.sub(r'^```json|```$', '', raw).strip()
+            raw = re.sub(r'^```|```$', '', raw).strip()
+            raw = re.sub(r'[\n\r\t]', '', raw)
+            data = json.loads(raw)
+            
+            # 兜底补全缺失字段
+            if "prices" not in data or not isinstance(data["prices"], dict):
+                data["prices"] = {
+                    "conservative": round(price*1.3),
+                    "recommended": round(price*1.5),
+                    "aggressive": round(price*1.1)
+                }
+            data['xianyu_title'] = filter_banned(data.get('xianyu_title', title))
+            data['description'] = filter_banned(data.get('description', '个人闲置，成色如图，功能正常，拍下尽快发货~'))
+            data['tags'] = data.get('tags', ["闲置", "二手", "好物分享"])
+            data['category'] = data.get('category', '闲置物品')
+            data['tips'] = data.get('tips', '实拍图+清晰描述更容易出单')
+            return data
+        else:
+            st.error(f"API调用失败：{resp.message if hasattr(resp, 'message') else '未知错误'}")
+            return None
+    except json.JSONDecodeError as e:
+        st.error(f"JSON解析失败：{str(e)}，AI返回：{raw[:200]}...")
+        # 兜底返回基础文案
+        return {
+            "xianyu_title": filter_banned(title),
+            "description": "个人闲置，成色如图，功能正常，拍下尽快发货~",
+            "tags": ["闲置", "二手", "好物分享"],
+            "category": "闲置物品",
+            "prices": {
+                "conservative": round(price*1.3),
+                "recommended": round(price*1.5),
+                "aggressive": round(price*1.1)
+            },
+            "tips": "实拍图+清晰描述更容易出单"
+        }
+    except Exception as e:
+        st.error(f"生成失败：{str(e)}")
+        return None
 
 # ==================== 会话状态 ====================
 st.sidebar.header("⚙️ 配置")
@@ -130,7 +167,7 @@ try:
     dashscope.api_key = st.secrets["DASHSCOPE_API_KEY"]
     st.sidebar.success("✅ API密钥已加载")
 except:
-    st.sidebar.error("❌ Secrets未配置")
+    st.sidebar.error("❌ Secrets未配置，请在Streamlit Secrets中添加DASHSCOPE_API_KEY")
 
 if 'gen_count' not in st.session_state:
     st.session_state.gen_count = 0
@@ -165,7 +202,7 @@ with tab1:
             st.session_state['img_url'] = img
             st.success(f"✅ {t} | ￥{p}")
         else:
-            st.warning("解析失败")
+            st.warning("解析失败，请手动输入标题和价格")
 
     title = st.text_input("商品标题", value=st.session_state.get("title", ""), key="single_title")
     price = st.number_input("成本价", value=st.session_state.get("price", 10.0), step=1.0, key="single_price")
@@ -179,8 +216,8 @@ with tab1:
         is_pro = st.checkbox("专业版（无限次）", value=False, key="pro_single")
 
     if run:
-        if not title:
-            st.error("请输入标题")
+        if not title.strip():
+            st.error("请输入商品标题")
         else:
             with st.spinner("AI生成中..."):
                 try:
@@ -188,7 +225,7 @@ with tab1:
                         st.session_state.gen_count += 1
                     data = generate_xianyu_content(title, price, style)
                     if not data:
-                        st.error("生成失败")
+                        st.error("生成失败，请重试")
                     else:
                         st.session_state.history.append({
                             "时间": datetime.now().strftime("%m-%d %H:%M"),
@@ -236,7 +273,7 @@ with tab2:
         with st.spinner("批量处理中..."):
             goods = batch_parse(batch_input)
             if not goods:
-                st.warning("无有效商品")
+                st.warning("无有效商品链接")
             else:
                 st.dataframe(pd.DataFrame(goods), key="df_batch")
                 res = []
@@ -252,8 +289,9 @@ with tab2:
                                 "标签": ",".join(d['tags']),
                                 "类目": d['category']
                             })
-                        time.sleep(1)
-                    except:
+                        time.sleep(2)
+                    except Exception as e:
+                        st.warning(f"生成失败：{g['标题']} → {str(e)}")
                         continue
                 st.session_state.batch_result = res
                 df = pd.DataFrame(res)
@@ -271,7 +309,7 @@ with tab3:
     if st.button("🖼️ 获取并加水印", key="get_img"):
         t, p, img_url = parse_pdd_link(img_link)
         if img_url:
-            img_data = requests.get(img_url).content
+            img_data = requests.get(img_url, timeout=15).content
             buf = BytesIO(img_data)
             marked = add_watermark(buf, mark_text)
             st.image(marked, use_column_width=True)
@@ -305,4 +343,4 @@ with tab5:
     st.info("开通：回复「我要加支付」")
 
 st.divider()
-st.caption("© 2026 小白SaaS · 至尊增强版 · 通义千问qwen3.5-flash")
+st.caption("© 2026 小白SaaS · 稳定增强版 · 通义千问qwen3.5-flash")
