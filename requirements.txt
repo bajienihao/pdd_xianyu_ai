@@ -1,3 +1,4 @@
 streamlit
 dashscope
 pandas
+requests
