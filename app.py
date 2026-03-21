@@ -51,42 +51,55 @@ def add_watermark(img_bytes, text="闲鱼优品"):
     except:
         return img_bytes
 
-# ==================== 【已修复】拼多多链接解析（API+页面双兜底）====================
+# ==================== 【方案二：加强反爬伪装】拼多多链接解析 ====================
 def parse_pdd_link(url):
     try:
+        # 兼容多种链接格式提取商品ID
         goods_id_match = re.search(r'goods_id=(\d+)', url) or re.search(r'/goods/(\d+)', url) or re.search(r'(\d{10,})', url)
         if not goods_id_match:
             st.warning("❌ 未识别到商品ID，请使用标准拼多多链接：https://mobile.yangkeduo.com/goods.html?goods_id=xxxxxx")
             return None, None, None
         goods_id = goods_id_match.group(1)
         
-        api_url = f"https://api.yangkeduo.com/api/oak/v6/item/info?goods_id={goods_id}"
+        # 仅使用页面解析，放弃API请求（避免403）
+        mobile_url = f"https://mobile.yangkeduo.com/goods.html?goods_id={goods_id}"
+        # 极致模拟iPhone Safari浏览器请求头
         headers = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 PddApp/7.0.0",
-            "Referer": f"https://mobile.yangkeduo.com/goods.html?goods_id={goods_id}",
-            "Accept": "application/json, text/plain, */*"
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            "Referer": "https://mobile.yangkeduo.com/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3",
+            "Accept-Encoding": "gzip, deflate, br",
+            "Connection": "keep-alive",
+            "Upgrade-Insecure-Requests": "1",
+            "Sec-Fetch-Dest": "document",
+            "Sec-Fetch-Mode": "navigate",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-User": "?1"
         }
-        r = requests.get(api_url, headers=headers, timeout=20)
-        
-        if r.status_code == 200:
-            data = r.json()
-            title = data.get("goods_name")
-            price = round(data.get("min_group_price", 0) / 100, 2) if data.get("min_group_price") else None
-            img_url = data.get("thumb_url")
+        r = requests.get(mobile_url, headers=headers, timeout=25)
+        r.encoding = 'utf-8'
+        text = r.text
+
+        # 多正则兜底匹配标题和价格
+        title_match = re.search(r'"goodsName":"([^"]+)"', text) or re.search(r'"title":"([^"]+)"', text) or re.search(r'<title>([^<]+)</title>', text)
+        title = title_match.group(1) if title_match else None
+        if title:
+            title = title.replace(" - 拼多多", "").replace("拼多多", "").strip()
+
+        price_match = re.search(r'"minGroupPrice":(\d+)', text) or re.search(r'"price":(\d+)', text) or re.search(r'(\d+\.?\d*)元', text)
+        price = round(int(price_match.group(1)) / 100, 2) if price_match and price_match.group(1).isdigit() else None
+
+        imgs = re.findall(r'"thumbUrl":"(https://[^"]+)"', text) or re.findall(r'<img[^>]+src="(https://[^"]+\.(jpg|png|webp))"', text)
+        img_url = imgs[0].replace("\\u002F", "/") if imgs and isinstance(imgs[0], str) else None
+        if img_url and img_url.startswith("//"):
+            img_url = "https:" + img_url
+
+        if title and price:
             return title, price, img_url
         else:
-            st.warning(f"⚠️ API请求失败（{r.status_code}），尝试页面解析兜底")
-            mobile_url = f"https://mobile.yangkeduo.com/goods.html?goods_id={goods_id}"
-            r = requests.get(mobile_url, headers=headers, timeout=20)
-            r.encoding = 'utf-8'
-            text = r.text
-            title_match = re.search(r'"goodsName":"([^"]+)"', text) or re.search(r'"title":"([^"]+)"', text)
-            title = title_match.group(1) if title_match else None
-            price_match = re.search(r'"minGroupPrice":(\d+)', text) or re.search(r'"price":(\d+)', text)
-            price = round(int(price_match.group(1)) / 100, 2) if price_match else None
-            imgs = re.findall(r'"thumbUrl":"(https://[^"]+)"', text)
-            img_url = imgs[0].replace("\\u002F", "/") if imgs else None
-            return title, price, img_url
+            st.warning("⚠️ 页面解析未获取到完整信息，请手动输入标题和价格")
+            return None, None, None
     except Exception as e:
         st.warning(f"❌ 解析失败：{str(e)}，请手动输入标题和价格")
         return None, None, None
@@ -169,6 +182,7 @@ def generate_xianyu_content(title, price, style):
     except Exception as e:
         st.error(f"生成失败：{str(e)}")
         return None
+
 # ==================== 会话状态 ====================
 st.sidebar.header("⚙️ 配置")
 try:
