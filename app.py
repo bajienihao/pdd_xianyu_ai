@@ -18,7 +18,7 @@ st.sidebar.caption("所有生成由开发者提供额度支持")
 try:
     dashscope.api_key = st.secrets["DASHSCOPE_API_KEY"]
 except:
-    st.sidebar.error("后台密钥未设置，请开发者先在Settings → Secrets配置")
+    st.sidebar.error("后台密钥未设置，请在Settings → Secrets配置")
 
 # ==================== 初始化 ====================
 if 'gen_count' not in st.session_state:
@@ -36,27 +36,43 @@ if st.session_state.gen_count >= 5:
 
 templates = ["默认闲置风", "情感故事风", "性价比爆款风", "限时秒杀风"]
 
-# ==================== 解析函数 ====================
+# ==================== 2026加强版解析函数（已优化） ====================
 def parse_pdd_link(url):
-    goods_id_match = re.search(r'goods_id=(\d+)', url)
+    """2026加强版解析：更高成功率"""
+    # 提取goods_id（支持多种链接格式）
+    goods_id_match = re.search(r'goods_id=(\d+)', url) or re.search(r'/goods/(\d+)', url) or re.search(r'goods2.html\?goods_id=(\d+)', url)
     if not goods_id_match:
         return None, None
     goods_id = goods_id_match.group(1)
     
     mobile_url = f"https://mobile.yangkeduo.com/goods.html?goods_id={goods_id}"
+    
+    # 更真实的手机浏览器头
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148",
-        "Referer": "https://mobile.yangkeduo.com/"
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 PddApp/6.0.0",
+        "Referer": "https://mobile.yangkeduo.com/",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Connection": "keep-alive"
     }
+    
     try:
-        r = requests.get(mobile_url, headers=headers, timeout=8)
+        r = requests.get(mobile_url, headers=headers, timeout=10)
         r.encoding = 'utf-8'
         text = r.text
         
-        title_match = re.search(r'"goodsName":"([^"]+)"', text)
+        # 多套正则匹配（覆盖2026最新字段）
+        title_match = re.search(r'"goodsName":"([^"]+)"', text) or \
+                      re.search(r'"goods_name":"([^"]+)"', text) or \
+                      re.search(r'"title":"([^"]+)"', text) or \
+                      re.search(r'goodsName["\s:]+([^"]+)', text)
         title = title_match.group(1) if title_match else None
         
-        price_match = re.search(r'"minGroupPrice":(\d+)', text) or re.search(r'"groupPrice":(\d+)', text) or re.search(r'"price":(\d+)', text)
+        # 价格匹配（分转元）
+        price_match = re.search(r'"minGroupPrice":(\d+)', text) or \
+                      re.search(r'"groupPrice":(\d+)', text) or \
+                      re.search(r'"price":(\d+)', text) or \
+                      re.search(r'"min_normal_price":(\d+)', text)
         price = round(int(price_match.group(1)) / 100, 2) if price_match else None
         
         return title, price
@@ -81,7 +97,8 @@ with tab1:
                 st.session_state.auto_title = title
                 st.session_state.auto_price = float(price)
             else:
-                st.warning("⚠️ 解析失败（平台可能改版），请手动输入下方标题和原价")
+                st.warning("⚠️ 解析失败（平台动态加载）")
+                st.info("👉 可以直接在下方手动输入标题和原价")
                 st.session_state.auto_title = ""
                 st.session_state.auto_price = 100.0
 
@@ -123,7 +140,6 @@ with tab1:
                 except:
                     data = {"xianyu_title": content[:100], "description": content}
                 
-                # 保存历史
                 entry = {
                     "时间": datetime.now().strftime("%m-%d %H:%M"),
                     "风格": style,
@@ -134,7 +150,6 @@ with tab1:
                 st.session_state.history.append(entry)
                 st.session_state.gen_count += 1
                 
-                # 显示结果
                 col1, col2 = st.columns([2, 1])
                 with col1:
                     st.subheader("📋 闲鱼标题（直接复制）")
