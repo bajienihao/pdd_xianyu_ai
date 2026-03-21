@@ -1,5 +1,6 @@
 import streamlit as st
 import dashscope
+from http import HTTPStatus
 import pandas as pd
 from datetime import datetime
 import json
@@ -33,37 +34,58 @@ def copy_btn(text, label="📋 复制"):
 # ==================== AI文案生成 ====================
 def generate_xianyu_content(title, price, style):
     prompt = f"""
-你是闲鱼卖家，用【{style}】风格写文案。
+你是闲鱼资深卖家，使用【{style}】风格撰写文案。
 商品标题：{title}
-成本价：{price}
+成本价：{price}元
 
-只返回干净JSON，不要多余内容：
+只返回标准JSON，不要多余内容、不要解释、不要包裹：
 {{
-    "xianyu_title": "标题",
-    "description": "描述",
+    "xianyu_title": "30字内标题",
+    "description": "200-300字描述",
     "tags": ["标签1","标签2","标签3"],
-    "category": "类目",
+    "category": "推荐类目",
     "prices": {{
         "conservative": {round(price*1.3)},
         "recommended": {round(price*1.5)},
         "aggressive": {round(price*1.1)}
-    }}
+    }},
+    "tips": "上架小技巧"
 }}
 """
     try:
         resp = dashscope.Generation.call(
             model='qwen-turbo',
             messages=[{"role": "user", "content": prompt}],
-            result_format='message'
+            result_format='message',
+            temperature=0.7,
+            timeout=30
         )
-        data = json.loads(resp.output.choices[0].message.content.strip())
-        data['xianyu_title'] = filter_banned(data.get('xianyu_title', title))
-        data['description'] = filter_banned(data.get('description', ''))
-        return data
-    except:
+        if resp.status_code == HTTPStatus.OK:
+            raw = resp.output.choices[0].message.content.strip()
+            raw = re.sub(r'^```json|```$', '', raw).strip()
+            raw = re.sub(r'^```|```$', '', raw).strip()
+            data = json.loads(raw)
+
+            if "prices" not in data or not isinstance(data["prices"], dict):
+                data["prices"] = {
+                    "conservative": round(price*1.3),
+                    "recommended": round(price*1.5),
+                    "aggressive": round(price*1.1)
+                }
+            data['xianyu_title'] = filter_banned(data.get('xianyu_title', title))
+            data['description'] = filter_banned(data.get('description', '个人闲置，成色如图，功能正常，拍下尽快发货~'))
+            data['tags'] = data.get('tags', ["闲置", "二手", "好物分享"])
+            data['category'] = data.get('category', '闲置物品')
+            data['tips'] = data.get('tips', '实拍图清晰，实物拍摄')
+            return data
+        else:
+            st.error(f"API调用失败：{resp.message if hasattr(resp, 'message') else '未知错误'}")
+            return None
+    except Exception as e:
+        st.error(f"生成失败：{str(e)}")
         return None
 
-# ==================== 会话 ====================
+# ==================== 会话状态 ====================
 if 'gen_count' not in st.session_state:
     st.session_state.gen_count = 0
 if 'history' not in st.session_state:
@@ -71,85 +93,128 @@ if 'history' not in st.session_state:
 if 'batch_data' not in st.session_state:
     st.session_state.batch_data = pd.DataFrame(columns=["原标题", "成本价", "风格"])
 
-styles = ["默认闲置风", "情感故事风", "性价比爆款风", "限时秒杀风"]
+free_limit = 5
+styles = ["默认闲置风","情感故事风","性价比爆款风","限时秒杀风"]
 
-# ==================== 标签 ====================
+# ==================== 标签页 ====================
 tab1, tab2, tab3, tab4 = st.tabs([
-    "单条生成", "批量上货", "图片去重", "历史记录"
+    "🔥 单条生成", "📦 批量上货", "🖼️ 图片去重", "📜 历史记录"
 ])
 
 # ==================== 单条生成 ====================
 with tab1:
     st.subheader("📝 商品信息")
-    title = st.text_input("商品标题")
-    price = st.number_input("成本价", value=10.0)
-    style = st.selectbox("风格", styles)
+    title = st.text_input("商品标题", key="single_title")
+    price = st.number_input("成本价", value=10.0, step=1.0, key="single_price")
+    style = st.selectbox("风格", styles, key="single_style")
 
-    if st.button("✨ 生成闲鱼文案", type="primary"):
-        if not title:
-            st.error("请输入标题")
+    col1, col2 = st.columns(2)
+    with col1:
+        run = st.button("✨ 生成闲鱼文案", type="primary",
+                        disabled=(st.session_state.gen_count >= free_limit), key="gen_single")
+    with col2:
+        is_pro = st.checkbox("专业版（无限次）", value=False, key="pro_single")
+
+    if run:
+        if not title.strip():
+            st.error("请输入商品标题")
         else:
-            data = generate_xianyu_content(title, price, style)
-            if data:
-                st.session_state.history.append({
-                    "时间": datetime.now().strftime("%m-%d %H:%M"),
-                    "原标题": title,
-                    "闲鱼标题": data['xianyu_title'],
-                    "推荐价": data['prices']['recommended']
-                })
-                st.code(data['xianyu_title'])
-                copy_btn(data['xianyu_title'])
-                st.text_area("描述", data['description'], height=200)
-                copy_btn(data['description'], "复制描述")
-                st.write("标签：", ", ".join(data['tags']))
+            with st.spinner("生成中..."):
+                data = generate_xianyu_content(title, price, style)
+                if data:
+                    st.session_state.history.append({
+                        "时间": datetime.now().strftime("%m-%d %H:%M"),
+                        "原标题": title,
+                        "闲鱼标题": data['xianyu_title'],
+                        "推荐价": data['prices']['recommended'],
+                        "风格": style
+                    })
+                    if not is_pro:
+                        st.session_state.gen_count += 1
+
+                    c1, c2 = st.columns([3,1])
+                    with c1:
+                        st.subheader("📋 标题")
+                        st.code(data['xianyu_title'])
+                        copy_btn(data['xianyu_title'])
+                    with c2:
+                        st.subheader("💰 定价")
+                        st.success(f"保守 {data['prices']['conservative']}")
+                        st.info(f"推荐 {data['prices']['recommended']}")
+                        st.warning(f"引流 {data['prices']['aggressive']}")
+
+                    st.subheader("📝 描述")
+                    st.text_area("", data['description'], height=240, key="desc_single")
+                    copy_btn(data['description'], "复制全文")
+
+                    st.subheader("🏷 标签")
+                    st.write(", ".join(data['tags']))
+
+                    st.subheader("📂 类目")
+                    st.success(data['category'])
 
 # ==================== 批量上货 ====================
 with tab2:
-    st.subheader("📦 批量生成")
-    c1, c2, c3 = st.columns(3)
-    new_title = c1.text_input("标题")
-    new_price = c2.number_input("价格", value=10.0)
-    new_style = c3.selectbox("风格", styles)
+    st.subheader("📦 批量上货")
+    col_add = st.columns(3)
+    with col_add[0]:
+        new_title = st.text_input("商品标题", key="batch_new_title")
+    with col_add[1]:
+        new_price = st.number_input("成本价", value=10.0, step=1.0, key="batch_new_price")
+    with col_add[2]:
+        new_style = st.selectbox("风格", styles, key="batch_new_style")
 
-    if st.button("➕ 添加到列表"):
-        if new_title:
-            new_row = pd.DataFrame([{"原标题": new_title, "成本价": new_price, "风格": new_style}])
+    if st.button("➕ 添加到列表", key="add_batch"):
+        if new_title.strip():
+            new_row = pd.DataFrame([{
+                "原标题": new_title,
+                "成本价": new_price,
+                "风格": new_style
+            }])
             st.session_state.batch_data = pd.concat([st.session_state.batch_data, new_row], ignore_index=True)
-            st.success("已添加")
+            st.success("✅ 添加成功")
         else:
             st.error("请输入标题")
 
     if not st.session_state.batch_data.empty:
-        st.dataframe(st.session_state.batch_data)
-        if st.button("✨ 批量生成"):
-            res = []
-            for _, row in st.session_state.batch_data.iterrows():
-                d = generate_xianyu_content(row["原标题"], row["成本价"], row["风格"])
-                if d:
-                    res.append({
-                        "标题": d["xianyu_title"],
-                        "描述": d["description"],
-                        "标签": ",".join(d["tags"])
-                    })
-            if res:
-                st.dataframe(pd.DataFrame(res))
+        st.dataframe(st.session_state.batch_data, use_container_width=True, key="batch_df")
+        if st.button("✨ 批量生成", key="gen_batch", disabled=(st.session_state.gen_count >= free_limit)):
+            with st.spinner("批量生成中..."):
+                res = []
+                for _, row in st.session_state.batch_data.iterrows():
+                    d = generate_xianyu_content(row["原标题"], row["成本价"], row["风格"])
+                    if d:
+                        res.append({
+                            "原标题": row["原标题"],
+                            "闲鱼标题": d["xianyu_title"],
+                            "描述": d["description"],
+                            "推荐价": d["prices"]["recommended"],
+                            "标签": ",".join(d["tags"]),
+                            "类目": d["category"]
+                        })
+                        st.session_state.gen_count += 1
+                if res:
+                    df = pd.DataFrame(res)
+                    st.dataframe(df, use_container_width=True, key="batch_result_df")
+                    bio = BytesIO()
+                    with pd.ExcelWriter(bio, engine='openpyxl') as w:
+                        df.to_excel(w, index=False)
+                    st.download_button("📥 导出Excel", bio.getvalue(), "批量文案.xlsx", key="dl_batch")
+    else:
+        st.info("请先添加商品")
 
-# ==================== 图片去重（手机相册直选 + 多选）====================
+# ==================== 图片去重 ====================
 with tab3:
-    st.subheader("🖼️ 图片去重（手机相册多选）")
-
-    # 关键：capture 支持相机 & 相册，multiple 多选
+    st.subheader("🖼️ 图片AI去重工具")
     uploaded_files = st.file_uploader(
-        "点此处打开相册（可多选）",
-        type=["jpg", "jpeg", "png"],
+        "点击选择图片（可多选）",
+        type=["jpg","jpeg","png"],
         accept_multiple_files=True,
-        key="mobile_gallery",
-        help="在手机上会直接打开相册，和微信发图一样"
+        key="img_uploader_final"
     )
 
     if uploaded_files:
-        st.success(f"✅ 已选择 {len(uploaded_files)} 张图片")
-
+        st.success(f"✅ 已加载 {len(uploaded_files)} 张图片")
         imgs = []
         for f in uploaded_files:
             try:
@@ -158,40 +223,48 @@ with tab3:
             except:
                 continue
 
-        st.subheader("已上传")
+        st.subheader("已上传图片预览")
         cols = st.columns(4)
         for i, img in enumerate(imgs):
             with cols[i % 4]:
                 st.image(img, use_column_width=True)
 
-        if st.button("🔍 开始去重", type="primary"):
-            with st.spinner("去重中..."):
+        if st.button("🔍 开始去重", type="primary", key="start_dedup"):
+            with st.spinner("正在检测重复图片..."):
                 hash_list = []
-                unique = []
+                unique_imgs = []
                 for img in imgs:
                     h = imagehash.average_hash(img)
                     if h not in hash_list:
                         hash_list.append(h)
-                        unique.append(img)
+                        unique_imgs.append(img)
 
-            st.success(f"去重完成：保留 {len(unique)} 张")
-            st.subheader("去重结果")
+            st.success(f"去重完成：保留 {len(unique_imgs)} 张不重复图片")
+            st.subheader("✅ 去重后图片")
 
             cols_out = st.columns(4)
-            for i, img in enumerate(unique):
+            for i, img in enumerate(unique_imgs):
                 with cols_out[i % 4]:
                     st.image(img, use_column_width=True)
                     buf = BytesIO()
                     img.save(buf, format="JPEG")
-                    st.download_button(f"下载{i+1}", buf, f"pic_{i+1}.jpg")
+                    st.download_button(
+                        f"下载第{i+1}张",
+                        data=buf.getvalue(),
+                        file_name=f"去重图片_{i+1}.jpg",
+                        key=f"download_img_{i}"
+                    )
+    else:
+        st.info("请选择图片")
 
-# ==================== 历史 ====================
+# ==================== 历史记录 ====================
 with tab4:
-    st.subheader("📜 历史记录")
+    st.subheader("📜 生成历史")
     if st.session_state.history:
-        st.dataframe(pd.DataFrame(st.session_state))
+        df = pd.DataFrame(st.session_state.history)
+        st.dataframe(df, use_container_width=True, key="history_df")
     else:
         st.info("暂无记录")
 
 st.divider()
-st.caption("闲鱼上货助手 · 手机优化版")
+st.caption("© 2026 闲鱼上货助手 · 稳定版")
