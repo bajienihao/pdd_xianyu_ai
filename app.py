@@ -81,7 +81,7 @@ def generate_xianyu_content(title, price, style):
         st.error(f"生成失败：{str(e)}")
         return None
 
-# ==================== 图片去重（感知哈希）====================
+# ==================== 图片去重 ====================
 def find_duplicates(images, hash_size=8, threshold=5):
     hashes = []
     for idx, img in enumerate(images):
@@ -91,22 +91,17 @@ def find_duplicates(images, hash_size=8, threshold=5):
         except:
             continue
 
-    duplicate_pairs = defaultdict(list)
+    dup_indices = set()
     for i, (idx1, h1) in enumerate(hashes):
         for idx2, h2 in hashes[i+1:]:
             if abs(h1 - h2) <= threshold:
-                duplicate_pairs[idx1].append(idx2)
-
-    dup_indices = set()
-    for k in duplicate_pairs:
-        dup_indices.update(duplicate_pairs[k])
+                dup_indices.add(idx2)
 
     unique_images = []
     for idx, img in enumerate(images):
         if idx not in dup_indices:
             unique_images.append(img)
-
-    return unique_images, len(images), len(unique_images)
+    return unique_images
 
 # ==================== 会话状态 ====================
 st.sidebar.header("⚙️ 配置")
@@ -238,44 +233,44 @@ with tab2:
     else:
         st.info("请先添加商品")
 
-# ==================== 图片去重 + 可下载 ====================
+# ==================== 图片去重（上传即显示）=====================
 with tab3:
-    st.subheader("🖼️ 图片AI去重（可单张下载）")
-    uploaded_files = st.file_uploader("批量上传图片", type=["jpg","jpeg","png"], accept_multiple_files=True)
-    threshold = st.slider("重复识别精度（越小越严格）", 1, 15, 5)
+    st.subheader("🖼️ 图片AI去重工具")
+    uploaded = st.file_uploader("选择图片（可多选）", type=["jpg","jpeg","png"], accept_multiple_files=True)
+    sensitivity = st.slider("重复识别精度（越小越严格）", 1, 15, 5)
 
-    if uploaded_files:
-        images = []
-        for f in uploaded_files:
+    images = []
+    if uploaded:
+        st.subheader("📷 已上传图片预览")
+        cols = st.columns(4)
+        for i, f in enumerate(uploaded):
             try:
                 img = Image.open(BytesIO(f.read())).convert("RGB")
                 images.append(img)
+                with cols[i % 4]:
+                    st.image(img, use_column_width=True, caption=f"图片 {i+1}")
             except:
                 continue
 
-        total = len(images)
-        st.success(f"✅ 已加载 {total} 张图片")
+    if uploaded and st.button("🔍 开始去重"):
+        with st.spinner("正在检测重复图片..."):
+            unique_imgs = find_duplicates(images, threshold=sensitivity)
 
-        if st.button("🔍 开始去重"):
-            with st.spinner("正在比对重复图片..."):
-                unique_imgs, _, remain = find_duplicates(images, threshold=threshold)
+        st.success(f"✅ 去重完成：保留 {len(unique_imgs)} 张不重复图片")
+        st.subheader("✅ 去重后图片（可直接下载）")
 
-                st.success(f"去重完成：共{total}张，保留{remain}张不重复图片")
-                st.subheader("✅ 去重后可用图片")
-
-                # 一行4张图 + 每个图下面都有下载按钮
-                cols = st.columns(4)
-                for i, img in enumerate(unique_imgs):
-                    with cols[i % 4]:
-                        st.image(img, use_column_width=True)
-                        buf = BytesIO()
-                        img.save(buf, format="JPEG")
-                        st.download_button(
-                            label=f"💾 下载第{i+1}张",
-                            data=buf.getvalue(),
-                            file_name=f"去重图片_{i+1}.jpg",
-                            mime="image/jpeg"
-                        )
+        cols = st.columns(4)
+        for i, img in enumerate(unique_imgs):
+            with cols[i % 4]:
+                st.image(img, use_column_width=True, caption=f"可用图片 {i+1}")
+                buf = BytesIO()
+                img.save(buf, format="JPEG")
+                st.download_button(
+                    label=f"下载图片{i+1}",
+                    data=buf.getvalue(),
+                    file_name=f"去重图片_{i+1}.jpg",
+                    mime="image/jpeg"
+                )
 
 # ==================== 历史记录 ====================
 with tab4:
