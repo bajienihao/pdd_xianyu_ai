@@ -81,27 +81,49 @@ def generate_xianyu_content(title, price, style):
         st.error(f"生成失败：{str(e)}")
         return None
 
-# ==================== 图片去重 ====================
-def find_duplicates(images, hash_size=8, threshold=5):
-    hashes = []
-    for idx, img in enumerate(images):
-        try:
-            h = imagehash.average_hash(img, hash_size=hash_size)
-            hashes.append((idx, h))
-        except:
-            continue
+# ==================== 图片去重（极简稳定版）=====================
+with tab3:
+    st.subheader("🖼️ 图片AI去重工具")
+    uploaded_files = st.file_uploader("选择图片（可多选）", type=["jpg","jpeg","png"], accept_multiple_files=True)
 
-    dup_indices = set()
-    for i, (idx1, h1) in enumerate(hashes):
-        for idx2, h2 in hashes[i+1:]:
-            if abs(h1 - h2) <= threshold:
-                dup_indices.add(idx2)
+    # 只要上传了，就立刻显示
+    if uploaded_files:
+        st.success(f"已上传 {len(uploaded_files)} 张图片")
+        st.subheader("已上传预览")
+        
+        cols = st.columns(4)
+        imgs = []
+        for i, file in enumerate(uploaded_files):
+            try:
+                img = Image.open(BytesIO(file.read())).convert("RGB")
+                imgs.append(img)
+                with cols[i % 4]:
+                    st.image(img, use_column_width=True)
+            except:
+                pass
 
-    unique_images = []
-    for idx, img in enumerate(images):
-        if idx not in dup_indices:
-            unique_images.append(img)
-    return unique_images
+        # 去重按钮
+        if st.button("开始去重"):
+            with st.spinner("处理中..."):
+                # 简单去重
+                unique = []
+                hashes = []
+                for img in imgs:
+                    h = imagehash.average_hash(img)
+                    if h not in hashes:
+                        hashes.append(h)
+                        unique.append(img)
+
+            st.success(f"去重完成，保留 {len(unique)} 张")
+            st.subheader("去重结果")
+
+            cols2 = st.columns(4)
+            for i, img in enumerate(unique):
+                with cols2[i % 4]:
+                    st.image(img, use_column_width=True)
+                    buf = BytesIO()
+                    img.save(buf, format="JPEG")
+                    st.download_button(f"下载{i+1}", buf, f"img{i+1}.jpg")
 
 # ==================== 会话状态 ====================
 st.sidebar.header("⚙️ 配置")
