@@ -15,18 +15,9 @@ from PIL import Image, ImageDraw, ImageFont
 st.set_page_config(page_title="拼多多→闲鱼AI上货助手 Pro", page_icon="🚀", layout="wide")
 st.title("🚀 拼多多→闲鱼 AI上货助手 Pro 2026稳定版")
 
-# ==================== 违禁词库（闲鱼超强版）====================
-banned_words = [
-    "全新","正品","原厂","代购","官网","授权","专卖","特供",
-    "高仿","A货","一比一","走私","免税","海关扣","罚没",
-    "批发","清仓","秒杀","军工","医用","内部渠道","假货",
-    "原厂直供","限量","限购","绝版","进口","原装","盗版"
-]
-
+# ==================== 违禁词库（已关闭过滤）====================
 def filter_banned(text):
-    for w in banned_words:
-        text = text.replace(w, "【违规词】")
-    return text
+    return text  # 不替换任何词，保留原文
 
 # ==================== 一键复制 ====================
 def copy_btn(text, label="📋 复制"):
@@ -51,7 +42,7 @@ def add_watermark(img_bytes, text="闲鱼优品"):
     except:
         return img_bytes
 
-# ==================== 【方案一：关闭自动解析】====================
+# ==================== 关闭自动解析 ====================
 def parse_pdd_link(url):
     st.info("🔔 自动解析已关闭，请手动输入商品标题和价格")
     return None, None, None
@@ -159,10 +150,6 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ==================== 单条生成 ====================
 with tab1:
     st.subheader("📝 手动输入商品信息")
-    link = st.text_input("商品链接（可不填）", key="single_link")
-    if st.button("🚀 解析商品", type="primary", key="parse_single"):
-        parse_pdd_link(link)
-
     title = st.text_input("商品标题", value=st.session_state.get("title", ""), key="single_title")
     price = st.number_input("成本价", value=st.session_state.get("price", 10.0), step=1.0, key="single_price")
     style = st.selectbox("风格", styles, key="single_style")
@@ -226,13 +213,20 @@ with tab2:
     st.subheader("📦 批量上货（手动填写）")
     st.info("当前已关闭链接解析，可手动复制生成结果使用")
 
-# ==================== 图片下载+水印 ====================
+# ==================== 图片上传+水印（修复版）====================
 with tab3:
-    st.subheader("🖼️ 商品图片下载 & 水印")
-    img_link = st.text_input("商品链接", key="img_link")
+    st.subheader("🖼️ 图片上传 & 加水印")
+    uploaded_file = st.file_uploader("上传商品图片", type=["jpg", "png", "jpeg"], key="upload_img")
     mark_text = st.text_input("水印文字", value="闲鱼优品", key="watermark_text")
-    if st.button("🖼️ 获取并加水印", key="get_img"):
-        st.warning("🔔 图片解析已关闭，请手动上传图片使用")
+    
+    if uploaded_file is not None:
+        img_bytes = BytesIO(uploaded_file.getvalue())
+        st.image(img_bytes, caption="原图预览", use_column_width=True)
+        
+        if st.button("🖼️ 生成水印图", key="add_mark"):
+            marked = add_watermark(img_bytes, mark_text)
+            st.image(marked, caption="加水印后效果", use_column_width=True)
+            st.download_button("💾 保存带水印图片", marked, "xianyu_product.jpg", key="dl_img")
 
 # ==================== 历史 ====================
 with tab4:
