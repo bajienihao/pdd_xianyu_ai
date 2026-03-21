@@ -1,5 +1,5 @@
 streamlit
-dashscope
+dashscope>=1.20.0  # 升级到支持 qwen3.5-flash 的版本
 pandas
 requests
 pillow
