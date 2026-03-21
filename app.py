@@ -51,70 +51,16 @@ def add_watermark(img_bytes, text="闲鱼优品"):
     except:
         return img_bytes
 
-# ==================== 【方案二：加强反爬伪装】拼多多链接解析 ====================
+# ==================== 【方案一：关闭自动解析】====================
 def parse_pdd_link(url):
-    try:
-        # 兼容多种链接格式提取商品ID
-        goods_id_match = re.search(r'goods_id=(\d+)', url) or re.search(r'/goods/(\d+)', url) or re.search(r'(\d{10,})', url)
-        if not goods_id_match:
-            st.warning("❌ 未识别到商品ID，请使用标准拼多多链接：https://mobile.yangkeduo.com/goods.html?goods_id=xxxxxx")
-            return None, None, None
-        goods_id = goods_id_match.group(1)
-        
-        # 仅使用页面解析，放弃API请求（避免403）
-        mobile_url = f"https://mobile.yangkeduo.com/goods.html?goods_id={goods_id}"
-        # 极致模拟iPhone Safari浏览器请求头
-        headers = {
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-            "Referer": "https://mobile.yangkeduo.com/",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "zh-CN,zh;q=0.8,en-US;q=0.5,en;q=0.3",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "same-origin",
-            "Sec-Fetch-User": "?1"
-        }
-        r = requests.get(mobile_url, headers=headers, timeout=25)
-        r.encoding = 'utf-8'
-        text = r.text
+    st.info("🔔 自动解析已关闭，请手动输入商品标题和价格")
+    return None, None, None
 
-        # 多正则兜底匹配标题和价格
-        title_match = re.search(r'"goodsName":"([^"]+)"', text) or re.search(r'"title":"([^"]+)"', text) or re.search(r'<title>([^<]+)</title>', text)
-        title = title_match.group(1) if title_match else None
-        if title:
-            title = title.replace(" - 拼多多", "").replace("拼多多", "").strip()
-
-        price_match = re.search(r'"minGroupPrice":(\d+)', text) or re.search(r'"price":(\d+)', text) or re.search(r'(\d+\.?\d*)元', text)
-        price = round(int(price_match.group(1)) / 100, 2) if price_match and price_match.group(1).isdigit() else None
-
-        imgs = re.findall(r'"thumbUrl":"(https://[^"]+)"', text) or re.findall(r'<img[^>]+src="(https://[^"]+\.(jpg|png|webp))"', text)
-        img_url = imgs[0].replace("\\u002F", "/") if imgs and isinstance(imgs[0], str) else None
-        if img_url and img_url.startswith("//"):
-            img_url = "https:" + img_url
-
-        if title and price:
-            return title, price, img_url
-        else:
-            st.warning("⚠️ 页面解析未获取到完整信息，请手动输入标题和价格")
-            return None, None, None
-    except Exception as e:
-        st.warning(f"❌ 解析失败：{str(e)}，请手动输入标题和价格")
-        return None, None, None
-
-# ==================== 批量链接解析 ====================
 def batch_parse(text):
-    urls = re.findall(r"https?://\S+", text)
-    res = []
-    for u in urls[:10]:
-        t, p, img = parse_pdd_link(u)
-        if t and p:
-            res.append({"链接": u, "标题": t, "价格": p, "主图": img})
-    return res
+    st.info("🔔 批量解析已关闭，请手动填写信息")
+    return []
 
-# ==================== AI生成（稳定版，已切换为 qwen-turbo）====================
+# ==================== AI生成（稳定版）====================
 def generate_xianyu_content(title, price, style):
     prompt = f"""
 你是闲鱼TOP级卖家，严格使用【{style}】风格。
@@ -166,7 +112,7 @@ def generate_xianyu_content(title, price, style):
             st.error(f"API调用失败：{resp.message if hasattr(resp, 'message') else '未知错误'}")
             return None
     except json.JSONDecodeError as e:
-        st.error(f"JSON解析失败：{str(e)}，AI返回：{raw[:200]}...")
+        st.error(f"JSON解析失败：{str(e)}")
         return {
             "xianyu_title": filter_banned(title),
             "description": "个人闲置，成色如图，功能正常，拍下尽快发货~",
@@ -195,8 +141,6 @@ if 'gen_count' not in st.session_state:
     st.session_state.gen_count = 0
 if 'history' not in st.session_state:
     st.session_state.history = []
-if 'batch_result' not in st.session_state:
-    st.session_state.batch_result = []
 
 free_limit = 5
 st.sidebar.metric("今日免费次数", f"{free_limit - st.session_state.gen_count}/{free_limit}")
@@ -214,17 +158,10 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 
 # ==================== 单条生成 ====================
 with tab1:
-    st.subheader("🔗 拼多多链接解析")
-    link = st.text_input("商品链接", key="single_link", placeholder="https://mobile.yangkeduo.com/goods.html?goods_id=xxxxxx")
+    st.subheader("📝 手动输入商品信息")
+    link = st.text_input("商品链接（可不填）", key="single_link")
     if st.button("🚀 解析商品", type="primary", key="parse_single"):
-        t, p, img = parse_pdd_link(link)
-        if t and p:
-            st.session_state['title'] = t
-            st.session_state['price'] = p
-            st.session_state['img_url'] = img
-            st.success(f"✅ {t} | ￥{p}")
-        else:
-            st.warning("解析失败，请手动输入标题和价格")
+        parse_pdd_link(link)
 
     title = st.text_input("商品标题", value=st.session_state.get("title", ""), key="single_title")
     price = st.number_input("成本价", value=st.session_state.get("price", 10.0), step=1.0, key="single_price")
@@ -286,42 +223,8 @@ with tab1:
 
 # ==================== 批量生成 ====================
 with tab2:
-    st.subheader("📦 批量链接一行一个")
-    batch_input = st.text_area("链接列表", height=200, key="batch_links", placeholder="一行一个拼多多商品链接")
-    batch_style = st.selectbox("批量生成风格", styles, key="batch_style")
-    pro_batch = st.checkbox("专业版批量模式", value=False, key="pro_batch")
-
-    if st.button("🔍 解析并批量生成", key="gen_batch"):
-        with st.spinner("批量处理中..."):
-            goods = batch_parse(batch_input)
-            if not goods:
-                st.warning("无有效商品链接")
-            else:
-                st.dataframe(pd.DataFrame(goods), key="df_batch")
-                res = []
-                for g in goods[:5]:
-                    try:
-                        d = generate_xianyu_content(g['标题'], g['价格'], batch_style)
-                        if d:
-                            res.append({
-                                "原标题": g['标题'],
-                                "闲鱼标题": d['xianyu_title'],
-                                "描述": d['description'],
-                                "推荐价": d['prices']['recommended'],
-                                "标签": ",".join(d['tags']),
-                                "类目": d['category']
-                            })
-                        time.sleep(2)
-                    except Exception as e:
-                        st.warning(f"生成失败：{g['标题']} → {str(e)}")
-                        continue
-                st.session_state.batch_result = res
-                df = pd.DataFrame(res)
-                st.dataframe(df, use_container_width=True, key="df_result")
-                bio = BytesIO()
-                with pd.ExcelWriter(bio, engine='openpyxl') as w:
-                    df.to_excel(w, index=False)
-                st.download_button("📥 导出Excel", bio.getvalue(), "闲鱼批量文案.xlsx", key="dl_batch")
+    st.subheader("📦 批量上货（手动填写）")
+    st.info("当前已关闭链接解析，可手动复制生成结果使用")
 
 # ==================== 图片下载+水印 ====================
 with tab3:
@@ -329,15 +232,7 @@ with tab3:
     img_link = st.text_input("商品链接", key="img_link")
     mark_text = st.text_input("水印文字", value="闲鱼优品", key="watermark_text")
     if st.button("🖼️ 获取并加水印", key="get_img"):
-        t, p, img_url = parse_pdd_link(img_link)
-        if img_url:
-            img_data = requests.get(img_url, timeout=15).content
-            buf = BytesIO(img_data)
-            marked = add_watermark(buf, mark_text)
-            st.image(marked, use_column_width=True)
-            st.download_button("💾 保存图片", marked, "with_watermark.jpg", key="dl_img")
-        else:
-            st.warning("获取图片失败")
+        st.warning("🔔 图片解析已关闭，请手动上传图片使用")
 
 # ==================== 历史 ====================
 with tab4:
@@ -362,7 +257,6 @@ with tab5:
 ✅ 自动类目匹配
 ✅ 一键导出上架包
 """)
-    st.info("开通：回复「我要加支付」")
 
 st.divider()
 st.caption("© 2026 小白SaaS · 稳定增强版 · 通义千问qwen-turbo")
