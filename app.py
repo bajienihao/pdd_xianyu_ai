@@ -49,12 +49,33 @@ styles = list(st.session_state.templates.keys())
 def filter_banned(text):
     return text
 
+# ==================== 修复后的复制按钮 ====================
 def copy_btn(text, label="📋 复制"):
-    b64 = base64.b64encode(text.encode()).decode()
-    js = f"""
-    <button onclick="navigator.clipboard.writeText(decodeURIComponent(escape(window.atob('{b64}'))));">{label}</button>
+    # 安全可靠的 Streamlit 复制组件
+    escaped_text = text.replace('"', '\\"').replace("'", "\\'")
+    html = f"""
+    <div style="margin: 5px 0;">
+        <button onclick="
+            const text = '{escaped_text}';
+            navigator.clipboard.writeText(text).then(() => {{
+                alert('复制成功！');
+            }}).catch(err => {{
+                alert('复制失败：' + err);
+            }});
+        " style="
+            background-color:#4CAF50;
+            color:white;
+            border:none;
+            padding:6px 12px;
+            border-radius:6px;
+            cursor:pointer;
+            font-size:14px;
+        ">
+            {label}
+        </button>
+    </div>
     """
-    st.markdown(js, unsafe_allow_html=True)
+    st.components.v1.html(html, height=50)
 
 def compress_image(img, quality=85):
     buf = BytesIO()
