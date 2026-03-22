@@ -2,7 +2,7 @@ import streamlit as st
 import dashscope
 from http import HTTPStatus
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import re
 import base64
@@ -40,6 +40,21 @@ if 'templates' not in st.session_state:
         "情感故事风": "因个人原因忍痛割爱，宝贝成色很新，功能完好，希望找到新主人~",
         "性价比爆款风": "全新未拆封，性价比超高，手慢无！",
         "限时秒杀风": "清仓特价，仅限今天，错过再等一年！"
+    }
+
+# 擦亮计划 & 自动回复库
+if 'polish_plan' not in st.session_state:
+    st.session_state.polish_plan = []
+if 'auto_reply_lib' not in st.session_state:
+    st.session_state.auto_reply_lib = {
+        "在吗": "在的哦，宝贝都在，直接拍即可～",
+        "便宜吗": "已经是最低啦，不刀不包，当天发货",
+        "包邮吗": "单件不包，两件可以包～",
+        "有瑕疵吗": "实拍如图，功能正常，无大瑕疵",
+        "发什么快递": "默认圆通，急单可补差价发顺丰",
+        "能用多久": "正常使用很耐用，签收请先验收",
+        "可以退换吗": "闲置物品，签收无质量问题不退不换",
+        "什么时候发货": "今天16点前拍，当天都能发"
     }
 
 free_limit = 20
@@ -213,9 +228,10 @@ def generate_xianyu_content(title, price, style):
         return None
 
 # ==================== 标签页 ====================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🔥 单条生成", "📦 批量上货", "🖼️ 图片处理",
-    "📝 文案模板", "💬 营销话术", "📊 数据统计"
+    "📝 文案模板", "💬 营销话术",
+    "⏰ 自动擦亮计划", "🤖 自动回复库"
 ])
 
 # ==================== 1. 单条生成 ====================
@@ -418,19 +434,65 @@ with tab5:
     st.subheader("📈 最佳发布时间指南")
     st.code(best_post_time())
 
-# ==================== 6. 数据统计 ====================
+# ==================== 6. 自动擦亮计划 ====================
 with tab6:
-    st.subheader("📊 使用统计")
-    c1,c2,c3 = st.columns(3)
-    c1.metric("今日生成", st.session_state.gen_count)
-    c2.metric("历史记录", len(st.session_state.history))
-    c3.metric("剩余免费", max(0, free_limit - st.session_state.gen_count))
+    st.subheader("⏰ 自动擦亮计划 · 智能排班")
+    st.markdown("""
+> 说明：闲鱼规则：**每4小时可擦亮一次**，此工具帮你排班，到点手动点一下即可
+""")
+    p_title = st.text_input("商品标题", key="plan_title")
+    p_times = st.number_input("每日擦亮次数", min_value=1, max_value=5, value=3)
 
-    st.subheader("📜 最近记录")
-    if st.session_state.history:
-        st.dataframe(pd.DataFrame(st.session_state.history[-10:]), use_container_width=True)
-    else:
-        st.info("暂无记录")
+    if st.button("📅 生成擦亮时间表"):
+        if not p_title:
+            st.error("请输入商品标题")
+        else:
+            now = datetime.now()
+            st.session_state.polish_plan = []
+            for i in range(p_times):
+                t = now + timedelta(hours=4*i)
+                st.session_state.polish_plan.append({
+                    "商品": p_title,
+                    "计划时间": t.strftime("%m-%d %H:%M"),
+                    "状态": "待擦亮"
+                })
+            st.success("✅ 排班完成！")
+
+    if st.session_state.polish_plan:
+        st.dataframe(pd.DataFrame(st.session_state.polish_plan), use_container_width=True)
+        if st.button("🗑 清空计划"):
+            st.session_state.polish_plan = []
+            st.rerun()
+
+# ==================== 7. 自动回复库 ====================
+with tab7:
+    st.subheader("🤖 自动回复库 · 客户问题一键回复")
+    st.markdown("客户问什么，点一下直接复制，粘贴发送")
+
+    q = st.text_input("新增问题关键词")
+    a = st.text_area("新增回复内容")
+    if st.button("➕ 添加到自动回复"):
+        if q and a:
+            st.session_state.auto_reply_lib[q] = a
+            st.success("添加成功！")
+            st.rerun()
+
+    st.divider()
+    st.subheader("📋 常用回复库")
+    c1, c2 = st.columns(2)
+    items = list(st.session_state.auto_reply_lib.items())
+    half = len(items)//2 + 1
+
+    with c1:
+        for q, a in items[:half]:
+            with st.expander(f"❓ {q}"):
+                st.write(a)
+                copy_btn(a, "复制回复")
+    with c2:
+        for q, a in items[half:]:
+            with st.expander(f"❓ {q}"):
+                st.write(a)
+                copy_btn(a, "复制回复")
 
 st.divider()
-st.caption("© 2026 闲鱼上货助手 Pro Max · 全自动省心版")
+st.caption("© 2026 闲鱼上货助手 Pro Max · 安全合规版")
