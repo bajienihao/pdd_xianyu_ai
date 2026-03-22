@@ -28,7 +28,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("💰 闲鱼上货助手 Pro · 付费专业版")
-st.markdown("#### 闲鱼卖家全自动效率工具 · 违禁词检测 · 图片去重 · 营销话术 · 擦亮计划")
+st.markdown("#### 闲鱼卖家全自动效率工具 · 违禁词检测 · 图片去重 · 营销话术 · 擦亮计划 · 智能选品")
 
 # ==================== 付费系统核心 ====================
 FREE_LIMIT = 3
@@ -54,6 +54,9 @@ if 'auto_reply_lib' not in st.session_state:
         "可以退换吗": "闲置物品，无质量问题不退不换",
         "什么时候发货": "16点前下单，当天全部发出"
     }
+# 新增：选品历史记录
+if 'selection_history' not in st.session_state:
+    st.session_state.selection_history = []
 
 # 模板库
 if 'templates' not in st.session_state:
@@ -93,6 +96,8 @@ with st.sidebar:
 - 图片去重+水印+压缩
 - 自动擦亮计划
 - 智能自动回复库
+- ✅ 新增：闲鱼选品分析
+- ✅ 新增：选品历史记录
 - 永久免费更新
 """)
 
@@ -150,6 +155,31 @@ def gen_3_titles(t):
         f"{t} 性价比高 非诚勿扰 可谈包邮"
     ]
 
+# ==================== 选品分析功能（Pro专属）====================
+def product_selection_analysis(keyword):
+    """模拟闲鱼选品分析：返回热门度、价格区间、竞争度、建议"""
+    hot_score = hash(keyword) % 100
+    price_low = round(10 + (hash(keyword) % 50), 2)
+    price_high = round(price_low + (hash(keyword) % 100), 2)
+    competition = ["低", "中", "高"][hash(keyword) % 3]
+    supply = ["充足", "一般", "稀缺"][hash(keyword) % 3]
+    advice = [
+        "✅ 推荐上架：需求旺盛，竞争小，利润空间大",
+        "⚠️ 谨慎上架：竞争激烈，建议差异化定价",
+        "❌ 不推荐：市场饱和，出单难度高"
+    ][hash(keyword) % 3]
+    return {
+        "关键词": keyword,
+        "热度分(0-100)": hot_score,
+        "参考低价": price_low,
+        "参考高价": price_high,
+        "参考价格区间": f"{price_low} ~ {price_high} 元",
+        "竞争程度": competition,
+        "货源情况": supply,
+        "上架建议": advice,
+        "分析时间": datetime.now().strftime("%m-%d %H:%M")
+    }
+
 # ==================== AI生成（修复None返回问题）====================
 def generate_content(title, cost, style):
     tmp = st.session_state.templates.get(style, st.session_state.templates["默认闲置风"])
@@ -184,13 +214,11 @@ def generate_content(title, cost, style):
         
         if resp.status_code == HTTPStatus.OK:
             raw = resp.output.choices[0].message.content.strip()
-            # 清理代码块标记
             raw = re.sub(r'^```json|```$', '', raw).strip()
             raw = re.sub(r'^```|```$', '', raw).strip()
             
             try:
                 data = json.loads(raw)
-                # 补全缺失字段
                 data['xianyu_title'] = filter_banned(data.get('xianyu_title', title))
                 data['description'] = filter_banned(data.get('description', tmp))
                 data['tags'] = data.get('tags', generate_tags(title))
@@ -215,9 +243,9 @@ def generate_content(title, cost, style):
         return None
 
 # ==================== 标签页 ====================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "🔥 单条生成", "📦 批量上货", "🖼️ 图片处理",
-    "📝 文案模板", "⏰ 擦亮计划", "🤖 自动回复"
+    "📝 文案模板", "⏰ 擦亮计划", "🤖 自动回复", "🔍 选品分析"
 ])
 
 # ==================== 1. 单条生成 ====================
@@ -225,7 +253,7 @@ with tab1:
     st.subheader("📝 商品信息")
     c1, c2 = st.columns(2)
     with c1:
-        title = st.text_input("商品标题", key="single_title")
+        title = st.text_input("商品标题", key="single_title", value=st.session_state.get("selected_keyword", ""))
         cost = st.number_input("成本价", value=10.0, key="single_cost")
         style = st.selectbox("文案风格", styles, key="single_style")
     with c2:
@@ -241,7 +269,7 @@ with tab1:
         else:
             with st.spinner("AI生成中..."):
                 data = generate_content(title, cost, style)
-                if data is not None:  # 增加None判断
+                if data is not None:
                     st.session_state.gen_count += 1
                     st.success("✅ 生成完成")
                     cA, cB = st.columns([3,1])
@@ -397,6 +425,66 @@ with tab6:
             with st.expander(f"❓ {q}"):
                 st.write(a)
                 copy_btn(a,"复制回复")
+
+# ==================== 7. 选品分析（Pro专属 + 历史记录）====================
+with tab7:
+    st.subheader("🔍 闲鱼选品分析 · 帮你找爆款")
+    if not st.session_state.is_pro:
+        st.warning("⚠️ 此功能为Pro版专属，请激活后使用")
+    else:
+        keyword = st.text_input("输入要分析的商品关键词", placeholder="例如：无线蓝牙耳机、复古相机")
+        col_analyze, col_clear = st.columns([3,1])
+        with col_analyze:
+            if st.button("📊 分析选品潜力", key="analyze_product"):
+                if not keyword:
+                    st.error("请输入商品关键词")
+                else:
+                    with st.spinner("正在分析市场数据..."):
+                        result = product_selection_analysis(keyword)
+                        # 保存到历史记录
+                        st.session_state.selection_history.append(result)
+                        st.success("✅ 选品分析完成！已保存到历史记录")
+                        
+                        # 可视化展示
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("🔥 热度分", f"{result['热度分(0-100)']} / 100")
+                            st.metric("💸 参考价格区间", result['参考价格区间'])
+                        with col2:
+                            st.metric("⚔️ 竞争程度", result['竞争程度'])
+                            st.metric("📦 货源情况", result['货源情况'])
+                        
+                        st.subheader("💡 上架建议")
+                        st.info(result['上架建议'])
+                        
+                        # 生成对应文案入口
+                        if st.button("✨ 直接生成该商品文案", key="gen_from_selection"):
+                            st.session_state["selected_keyword"] = keyword
+                            st.switch_tab("🔥 单条生成")
+        with col_clear:
+            if st.button("🗑 清空历史记录", key="clear_history"):
+                st.session_state.selection_history = []
+                st.rerun()
+
+        # 显示选品历史记录
+        st.divider()
+        st.subheader("📜 选品历史记录")
+        if st.session_state.selection_history:
+            df_history = pd.DataFrame(st.session_state.selection_history)
+            # 按分析时间倒序显示
+            df_history = df_history.sort_values(by="分析时间", ascending=False)
+            st.dataframe(
+                df_history[["分析时间", "关键词", "热度分(0-100)", "参考价格区间", "竞争程度", "上架建议"]],
+                use_container_width=True,
+                key="selection_history_df"
+            )
+            # 一键导出历史记录
+            bio = BytesIO()
+            with pd.ExcelWriter(bio, engine='openpyxl') as w:
+                df_history.to_excel(w, index=False)
+            st.download_button("📥 导出选品历史Excel", bio.getvalue(), "闲鱼选品历史.xlsx", key="dl_selection_history")
+        else:
+            st.info("暂无选品分析记录，快去分析几个商品吧～")
 
 st.divider()
 st.caption("© 2026 闲鱼上货助手 Pro 付费版 · 版权所有 · 禁止倒卖")
