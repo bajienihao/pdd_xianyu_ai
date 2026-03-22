@@ -5,11 +5,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 import json
 import re
-import base64
 import imagehash
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
-import hashlib
 
 # ==================== 页面配置（商业化UI）====================
 st.set_page_config(
@@ -71,8 +69,8 @@ styles = list(st.session_state.templates.keys())
 # ==================== 侧边栏：付费激活 ====================
 with st.sidebar:
     st.header("🔐 付费激活")
-    key = st.text_input("请输入激活码", type="password")
-    if st.button("✅ 立即激活 Pro 版"):
+    key = st.text_input("请输入激活码", type="password", key="activate_key")
+    if st.button("✅ 立即激活 Pro 版", key="activate_btn"):
         if key.strip() == PRO_KEY:
             st.session_state.is_pro = True
             st.success("🎉 激活成功！永久使用全部功能")
@@ -152,36 +150,69 @@ def gen_3_titles(t):
         f"{t} 性价比高 非诚勿扰 可谈包邮"
     ]
 
-# ==================== AI生成 ====================
+# ==================== AI生成（修复None返回问题）====================
 def generate_content(title, cost, style):
-    tmp = st.session_state.templates.get(style)
+    tmp = st.session_state.templates.get(style, st.session_state.templates["默认闲置风"])
     prompt = f"""
-你是闲鱼爆款卖家，用【{style}】写文案，只返回标准JSON，无多余内容。
-商品：{title} 成本：{cost}
-模板：{tmp}
+你是闲鱼爆款卖家，用【{style}】风格写文案，只返回标准JSON格式，不要任何多余解释、代码块或说明。
+商品标题：{title}
+成本价：{cost}元
+基础描述模板：{tmp}
+
+返回格式示例：
 {{
-    "xianyu_title":"30字内标题",
-    "description":"200-300字描述",
+    "xianyu_title":"30字内吸引人标题",
+    "description":"200-300字商品描述",
     "tags":["标签1","标签2","标签3","标签4","标签5"],
     "category":"推荐类目",
     "prices":{{"conservative":{round(cost*1.3)},"recommended":{round(cost*1.5)},"aggressive":{round(cost*1.1)}}},
-    "tips":"上架技巧"
-}}"""
+    "tips":"上架小技巧"
+}}
+"""
     try:
-        dashscope.api_key = st.secrets.get("DASHSCOPE_API_KEY","")
-        resp = dashscope.Generation.call('qwen-turbo', messages=[{"role":"user","content":prompt}], temperature=0.7)
+        dashscope.api_key = st.secrets.get("DASHSCOPE_API_KEY", "")
+        if not dashscope.api_key:
+            st.error("❌ 未配置DASHSCOPE_API_KEY，请检查Secrets")
+            return None
+            
+        resp = dashscope.Generation.call(
+            model='qwen-turbo',
+            messages=[{"role":"user","content":prompt}],
+            temperature=0.7,
+            result_format='message'
+        )
+        
         if resp.status_code == HTTPStatus.OK:
             raw = resp.output.choices[0].message.content.strip()
+            # 清理代码块标记
             raw = re.sub(r'^```json|```$', '', raw).strip()
-            data = json.loads(raw)
-            data['xianyu_title'] = filter_banned(data.get('xianyu_title',title))
-            data['description'] = filter_banned(data.get('description',tmp))
-            return data
+            raw = re.sub(r'^```|```$', '', raw).strip()
+            
+            try:
+                data = json.loads(raw)
+                # 补全缺失字段
+                data['xianyu_title'] = filter_banned(data.get('xianyu_title', title))
+                data['description'] = filter_banned(data.get('description', tmp))
+                data['tags'] = data.get('tags', generate_tags(title))
+                data['category'] = data.get('category', '闲置物品')
+                data['tips'] = filter_banned(data.get('tips', '实拍清晰更容易出单'))
+                if "prices" not in data or not isinstance(data["prices"], dict):
+                    data["prices"] = {
+                        "conservative": round(cost*1.3),
+                        "recommended": round(cost*1.5),
+                        "aggressive": round(cost*1.1)
+                    }
+                return data
+            except json.JSONDecodeError as e:
+                st.error(f"❌ AI返回格式错误，无法解析JSON：{str(e)}")
+                st.code(raw, language="text")
+                return None
         else:
-            st.error("API调用失败")
+            st.error(f"❌ API调用失败：{resp.message if hasattr(resp, 'message') else '未知错误'}")
+            return None
     except Exception as e:
-        st.error(f"错误：{str(e)}")
-    return None
+        st.error(f"❌ 生成失败：{str(e)}")
+        return None
 
 # ==================== 标签页 ====================
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -194,9 +225,9 @@ with tab1:
     st.subheader("📝 商品信息")
     c1, c2 = st.columns(2)
     with c1:
-        title = st.text_input("商品标题")
-        cost = st.number_input("成本价", value=10.0)
-        style = st.selectbox("文案风格", styles)
+        title = st.text_input("商品标题", key="single_title")
+        cost = st.number_input("成本价", value=10.0, key="single_cost")
+        style = st.selectbox("文案风格", styles, key="single_style")
     with c2:
         st.info(f"引流价：{round(cost*1.1)} 元")
         st.info(f"保本价：{round(cost*1.3)} 元")
@@ -204,13 +235,13 @@ with tab1:
         tags = generate_tags(title)
 
     disabled = not st.session_state.is_pro and st.session_state.gen_count >= FREE_LIMIT
-    if st.button("✨ 生成闲鱼爆款文案", type="primary", disabled=disabled):
+    if st.button("✨ 生成闲鱼爆款文案", type="primary", key="gen_single", disabled=disabled):
         if not title:
-            st.error("请输入标题")
+            st.error("请输入商品标题")
         else:
             with st.spinner("AI生成中..."):
                 data = generate_content(title, cost, style)
-                if data:
+                if data is not None:  # 增加None判断
                     st.session_state.gen_count += 1
                     st.success("✅ 生成完成")
                     cA, cB = st.columns([3,1])
@@ -220,7 +251,7 @@ with tab1:
                         copy_btn(data['xianyu_title'])
 
                         st.subheader("📝 描述")
-                        st.text_area("", data['description'], height=220)
+                        st.text_area("", data['description'], height=220, key="single_desc")
                         copy_btn(data['description'], "复制描述")
 
                         st.subheader("🏷 标签")
@@ -245,6 +276,8 @@ with tab1:
                     st.divider()
                     st.subheader("📦 一键复制全套")
                     copy_btn(full, "复制全套上架文案")
+                else:
+                    st.error("❌ 生成失败，请检查API配置或重试")
 
 # ==================== 2. 批量上货 ====================
 with tab2:
@@ -253,11 +286,11 @@ with tab2:
         st.warning("⚠️ 此功能为Pro版专属，请激活后使用")
     else:
         c1,c2,c3 = st.columns(3)
-        with c1: t = st.text_input("商品标题", key="bt")
-        with c2: p = st.number_input("成本价", key="bp")
-        with c3: s = st.selectbox("风格", styles, key="bs")
+        with c1: t = st.text_input("商品标题", key="batch_title")
+        with c2: p = st.number_input("成本价", key="batch_cost")
+        with c3: s = st.selectbox("风格", styles, key="batch_style")
 
-        if st.button("➕ 添加到列表"):
+        if st.button("➕ 添加到列表", key="add_batch"):
             if t:
                 new = pd.DataFrame([{"原标题":t,"成本价":p,"风格":s}])
                 st.session_state.batch_data = pd.concat([st.session_state.batch_data, new], ignore_index=True)
@@ -266,12 +299,12 @@ with tab2:
                 st.error("请输入标题")
 
         if not st.session_state.batch_data.empty:
-            st.dataframe(st.session_state.batch_data, use_container_width=True)
-            if st.button("🚀 批量生成所有文案"):
+            st.dataframe(st.session_state.batch_data, use_container_width=True, key="batch_df")
+            if st.button("🚀 批量生成所有文案", key="gen_batch"):
                 res = []
                 for _, r in st.session_state.batch_data.iterrows():
                     d = generate_content(r["原标题"], r["成本价"], r["风格"])
-                    if d:
+                    if d is not None:
                         res.append({
                             "原标题":r["原标题"], "闲鱼标题":d["xianyu_title"],
                             "描述":d["description"], "引流价":d["prices"]["aggressive"],
@@ -280,22 +313,22 @@ with tab2:
                         })
                 if res:
                     df = pd.DataFrame(res)
-                    st.dataframe(df, use_container_width=True)
+                    st.dataframe(df, use_container_width=True, key="batch_result_df")
                     bio = BytesIO()
                     with pd.ExcelWriter(bio, engine='openpyxl') as w:
                         df.to_excel(w, index=False)
-                    st.download_button("📥 导出Excel", bio.getvalue(), "闲鱼批量文案.xlsx")
+                    st.download_button("📥 导出Excel", bio.getvalue(), "闲鱼批量文案.xlsx", key="dl_batch")
 
 # ==================== 3. 图片处理 ====================
 with tab3:
     st.subheader("🖼️ 图片去重 + 压缩 + 水印")
     if not st.session_state.is_pro:
-        st.warning("Pro功能已解锁")
+        st.warning("⚠️ 此功能为Pro版专属，请激活后使用")
     else:
-        imgs = st.file_uploader("上传图片", type=["jpg","png"], accept_multiple_files=True)
-        q = st.slider("压缩质量", 50,100,85)
-        mark = st.text_input("水印文字", "闲鱼实拍")
-        if imgs and st.button("开始处理"):
+        imgs = st.file_uploader("上传图片", type=["jpg","png"], accept_multiple_files=True, key="img_uploader")
+        q = st.slider("压缩质量", 50,100,85, key="img_quality")
+        mark = st.text_input("水印文字", "闲鱼实拍", key="watermark_text")
+        if imgs and st.button("开始处理", key="process_img"):
             out = []
             hashes = []
             for f in imgs:
@@ -310,14 +343,14 @@ with tab3:
                 with cols[i%4]:
                     st.image(img, use_column_width=True)
                     b = compress_image(img, q)
-                    st.download_button(f"下载{i+1}", b, f"img_{i+1}.jpg", "image/jpeg")
+                    st.download_button(f"下载{i+1}", b, f"img_{i+1}.jpg", "image/jpeg", key=f"dl_img_{i}")
 
 # ==================== 4. 模板 ====================
 with tab4:
     st.subheader("📝 自定义文案模板")
-    n = st.text_input("模板名称")
-    c = st.text_area("模板内容", height=120)
-    if st.button("添加模板"):
+    n = st.text_input("模板名称", key="template_name")
+    c = st.text_area("模板内容", height=120, key="template_content")
+    if st.button("添加模板", key="add_template"):
         if n and c:
             st.session_state.templates[n] = c
             st.success("添加成功")
@@ -329,9 +362,9 @@ with tab4:
 # ==================== 5. 擦亮计划 ====================
 with tab5:
     st.subheader("⏰ 自动擦亮排班表")
-    t = st.text_input("商品标题")
-    n = st.number_input("每日擦亮次数",1,5,3)
-    if st.button("生成计划"):
+    t = st.text_input("商品标题", key="polish_title")
+    n = st.number_input("每日擦亮次数",1,5,3, key="polish_times")
+    if st.button("生成计划", key="gen_polish"):
         if t:
             plan = []
             now = datetime.now()
@@ -340,14 +373,14 @@ with tab5:
             st.session_state.polish_plan = plan
             st.success("已生成")
     if st.session_state.polish_plan:
-        st.dataframe(pd.DataFrame(st.session_state.polish_plan), use_container_width=True)
+        st.dataframe(pd.DataFrame(st.session_state.polish_plan), use_container_width=True, key="polish_plan_df")
 
 # ==================== 6. 自动回复 ====================
 with tab6:
     st.subheader("🤖 买家问答自动回复库")
-    q = st.text_input("问题")
-    a = st.text_area("回复")
-    if st.button("添加回复"):
+    q = st.text_input("问题", key="reply_q")
+    a = st.text_area("回复", key="reply_a")
+    if st.button("添加回复", key="add_reply"):
         if q and a:
             st.session_state.auto_reply_lib[q] = a
             st.rerun()
