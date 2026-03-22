@@ -49,20 +49,12 @@ styles = list(st.session_state.templates.keys())
 def filter_banned(text):
     return text
 
-# ==================== 修复后的复制按钮 ====================
+# ==================== 复制按钮（无弹窗，自动显示成功）====================
 def copy_btn(text, label="📋 复制"):
-    # 安全可靠的 Streamlit 复制组件
     escaped_text = text.replace('"', '\\"').replace("'", "\\'")
     html = f"""
-    <div style="margin: 5px 0;">
-        <button onclick="
-            const text = '{escaped_text}';
-            navigator.clipboard.writeText(text).then(() => {{
-                alert('复制成功！');
-            }}).catch(err => {{
-                alert('复制失败：' + err);
-            }});
-        " style="
+    <div style="margin:5px 0;">
+        <button id="copyBtn_{abs(hash(text))}" style="
             background-color:#4CAF50;
             color:white;
             border:none;
@@ -70,6 +62,16 @@ def copy_btn(text, label="📋 复制"):
             border-radius:6px;
             cursor:pointer;
             font-size:14px;
+        " onclick="
+            navigator.clipboard.writeText('{escaped_text}');
+            const btn = this;
+            const oldText = btn.innerText;
+            btn.innerText = '✅ 复制成功';
+            btn.style.backgroundColor='#10b981';
+            setTimeout(()=>{{
+                btn.innerText = oldText;
+                btn.style.backgroundColor='#4CAF50';
+            }}, 1200);
         ">
             {label}
         </button>
